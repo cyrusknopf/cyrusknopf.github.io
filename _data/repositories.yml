@@ -1,12 +1,6 @@
 github_users:
-  - torvalds
-  - alshedivat
+  - cyrusknopf
 
 github_repos:
-  - alshedivat/al-folio
-  - twbs/bootstrap
-  - jekyll/jekyll
-  - jquery/jquery
-  - FortAwesome/Font-Awesome
-  - jpswalsh/academicons
-  - mathjax/MathJax
+  - cyrusknopf/obsidian-smart-tasklists
+  - cyrusknopf/monte-carlo-chess
