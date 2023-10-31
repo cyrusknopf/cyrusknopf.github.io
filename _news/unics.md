@@ -5,4 +5,4 @@ inline: true
 related_posts: false
 ---
 
-1st Great Uni Hack - UniCS Challenge
+1st Place: Great Uni Hack - UniCS Challenge
