@@ -19,5 +19,5 @@ selected_papers: false # includes a list of papers marked as "selected={true}"
 social: false  # includes social icons at the bottom of the page
 ---
 
-Computer Science undergraduate at the University of Manchester. Interests in LLMs, natural language processing and game playing. Currently leveraging such models with 
+Computer Science undergraduate at the University of Manchester. Interests in quantum computing, array/functional programming and compiler engineering. Academically pursuing Haskell, system architecture and machine learning. Personally pursuing OCaml, APL, Monte Carlo for chess and a compiler written in C++. Currently leveraging large language models with 
 [Optimistics](https://www.optimistics.co.uk/).
