@@ -5,4 +5,4 @@ inline: true
 related_posts: false
 ---
 
-Joint 3rd - Bloomberg BPuzzled Manchester
+Top 3 - Bloomberg BPuzzled Manchester
