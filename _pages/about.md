@@ -19,5 +19,4 @@ selected_papers: false # includes a list of papers marked as "selected={true}"
 social: false  # includes social icons at the bottom of the page
 ---
 
-Computer Science undergraduate at the University of Manchester. Interests in theoretical computer science, array and functional programming, and compiler engineering. Academically pursuing Haskell, advanced system architecture design and machine learning. Personally pursuing OCaml, APL, and Monte Carlo tree search for chess. Currently leveraging large language models with 
-[Optimistics](https://www.optimistics.co.uk/).
+Software engineer writing C++ at [Turing Biosystems](https://turing.bio) for the [TuringDB](http://turingdb.ai) graph database engine. Interests in graphs, concurrent programming, and theoretical computer science.
