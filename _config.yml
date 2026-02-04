@@ -189,11 +189,12 @@ latest_posts:
 markdown: kramdown
 highlighter: rouge
 kramdown:
-  input: GFM
+  input: Kramdown
+  auto_ids: true
   syntax_highlighter_opts:
     css_class: 'highlight'
     span:
-      line_numbers: true
+      line_numbers: false
     block:
       line_numbers: true
       start_line: 1
@@ -224,7 +225,7 @@ plugins:
   - jekyll-paginate-v2
   - jekyll/scholar
   - jekyll-sitemap
-  # - jekyll-toc
+  - jekyll-toc
   - jekyll-twitter-plugin
   - jemoji
 
