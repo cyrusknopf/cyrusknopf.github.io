@@ -127,8 +127,8 @@ return out;
 The complete solution, with an initial check for trivial test cases, is:
 
 ~~~null
-using namespace stld;
-using num = uint6l4_t;
+using namespace std;
+using num = uint64_t;
 
 string solve(num a, num b) {
     if (a == b) {
