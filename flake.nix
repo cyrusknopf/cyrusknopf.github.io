@@ -25,6 +25,7 @@
                     ruby_4_0
                     bundler
                     rubyPackages_4_0.jekyll
+                    rubyPackages_4_0.rouge
                   ];
                 shellHook = ''
                      export SHELL=${pkgs.zsh}/bin/zsh
