@@ -13,8 +13,8 @@ x ^= msbit;
 
 string out = "2\n" + to_string(x) + ' ' + to_string(msbit);
 return out;
-</code></pre> <p>The complete solution, with an initial check for trivial test cases, is:</p> <pre><code class="language-null">using namespace stld;
-using num = uint6l4_t;
+</code></pre> <p>The complete solution, with an initial check for trivial test cases, is:</p> <pre><code class="language-null">using namespace std;
+using num = uint64_t;
 
 string solve(num a, num b) {
     if (a == b) {
