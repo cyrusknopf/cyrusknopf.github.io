@@ -22,6 +22,7 @@
                 buildInputs = with pkgs;
                   [
                     zsh
+                    fd
                     ruby_4_0
                     bundler
                     rubyPackages_4_0.jekyll
