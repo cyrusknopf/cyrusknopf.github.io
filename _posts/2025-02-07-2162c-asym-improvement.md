@@ -4,8 +4,7 @@ title: Codeforces 2162C -  Asymptotic and practical improvement over editorial
 date: 2026-02-07 03:33:00-0400
 description: bit tricks to get a constant time solution
 tags: cpp c++ codeforces algorithms
-categories: codeforces
-giscus_comments: false
+giscus_comments: true
 related_posts: false
 ---
 
