@@ -3,5 +3,6 @@
 
 .post .post-content #markdown-content p {
   text-align: justify;
-  hyphens: auto;
+  hyphens: none; // Does not hyphenante words to split on line
+  line-height: 1.5;
 }
