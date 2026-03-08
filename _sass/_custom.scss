@@ -33,7 +33,11 @@ code,
 }
 
 .rouge-code {
-  padding-left: 1em;
+  padding-left: 0.5em;
+}
+
+.rouge-gutter .lineno{
+  text-align: right;
 }
 
 .post blockquote {
