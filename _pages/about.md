@@ -11,7 +11,7 @@ profile:
   more_info: >
     <p></p>
     <p></p>
-    <p>London, UK</p>
+    <!-- <p>London, UK</p> -->
 
 news: false # includes a list of news items
 latest_posts: true  # includes a list of the newest posts

@@ -5,6 +5,16 @@ body {
   font-family: "Spectral", serif;
 }
 
+.post .post-content #markdown-content p {
+  text-align: justify;
+  hyphens: none; // Does not hyphenante words to split on line
+  line-height: 1.5;
+}
+
+.news th {
+  font-weight: normal;
+}
+
 /* monospace stack for all code-related elements */
 pre,
 code,
