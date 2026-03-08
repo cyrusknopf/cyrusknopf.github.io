@@ -1,0 +1,405 @@
+<!DOCTYPE html> <html lang="en"> <head> <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"> <meta charset="utf-8"> <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"> <meta http-equiv="X-UA-Compatible" content="IE=edge"> <title>A review of [[likely]] and [[unlikely]] | Cyrus Knopf</title> <meta name="author" content="Cyrus Knopf"> <meta name="description" content="how c++ attributes affect codegen"> <meta name="keywords" content="jekyll, jekyll-theme, academic-website, portfolio-website"> <link rel="stylesheet" href="/assets/css/bootstrap.min.css?a4b3f509e79c54a512b890d73235ef04"> <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mdbootstrap@4.20.0/css/mdb.min.css" integrity="sha256-jpjYvU3G3N6nrrBwXJoVEYI/0zw8htfFnhT9ljN3JJw=" crossorigin="anonymous"> <link defer rel="stylesheet" href="https://unpkg.com/bootstrap-table@1.22.1/dist/bootstrap-table.min.css"> <link rel="stylesheet" href="/assets/css/academicons.min.css?f0b7046b84e425c55f3463ac249818f5"> <link rel="stylesheet" type="text/css" href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700|Roboto+Slab:100,300,400,500,700|Material+Icons"> <link rel="stylesheet" href="/assets/css/jekyll-pygments-themes-github.css?19f3075a2d19613090fe9e16b564e1fe" media="" id="highlight_theme_light"> <link rel="shortcut icon" href="data:image/svg+xml,&lt;svg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%20100%20100%22&gt;&lt;text%20y=%22.9em%22%20font-size=%2290%22&gt;%F0%9F%92%BF&lt;/text&gt;&lt;/svg&gt;"> <link rel="stylesheet" href="/assets/css/main.css?d41d8cd98f00b204e9800998ecf8427e"> <link rel="canonical" href="https://cyrusknopf.com/posts/2026/likely-unlikely/"> </head> <body class="fixed-top-nav sticky-bottom-footer"> <header> <nav id="navbar" class="navbar navbar-light navbar-expand-sm fixed-top"> <div class="container"> <a class="navbar-brand title font-weight-lighter" href="/">Cyrus Knopf</a> <button class="navbar-toggler collapsed ml-auto" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation"> <span class="sr-only">Toggle navigation</span> <span class="icon-bar top-bar"></span> <span class="icon-bar middle-bar"></span> <span class="icon-bar bottom-bar"></span> </button> <div class="collapse navbar-collapse text-right" id="navbarNav"> <ul class="navbar-nav ml-auto flex-nowrap"> <li class="nav-item "> <a class="nav-link" href="/">about</a> </li> <li class="nav-item "> <a class="nav-link" href="/blog/">posts</a> </li> <li class="nav-item "> <a class="nav-link" href="/cv/">cv</a> </li> </ul> </div> </div> </nav> </header> <div class="container mt-5"> <link rel="stylesheet" href="/assets/css/custom.css"> <div class="post"> <header class="post-header"> <h1 class="post-title">A review of <code>[[likely]]</code> and <code>[[unlikely]]</code> </h1> <p class="post-meta">March 8, 2026</p> <p class="post-tags"> <a href="/blog/2026"> <i class="fas fa-calendar fa-sm"></i> 2026 </a>   ·   <a href="/blog/tag/cpp"> <i class="fas fa-hashtag fa-sm"></i> cpp</a>   <a href="/blog/tag/c"> <i class="fas fa-hashtag fa-sm"></i> c++</a>   <a href="/blog/tag/compilers"> <i class="fas fa-hashtag fa-sm"></i> compilers</a>   </p> </header> <article class="post-content"> <div id="markdown-content"> <blockquote> <p>tldr; <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code> may change how the compiler lays out basic blocks, but likely does not help the branch prediction unit. if you just want faster programs, try profile guided optimisation; if you want to change the layout of a specific section of code, consider <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code>, but impact is not consistent across implementations. always check the assembly, always benchmark.</p> </blockquote> <hr> <ul> <li><a href="#background-code-layout">Background: Code Layout</a></li> <li><a href="#how-unlikely-affects-branch-probabilities">How <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code> affects branch probabilities</a></li> <li><a href="#applications">Applications</a></li> <li><a href="#unlikely-vs-pgo"><code class="language-plaintext highlighter-rouge">[[(un)likely]]</code> vs PGO</a></li> <li><a href="#verifiable-branch-annotation-with-pgo">Verifiable branch annotation with PGO</a></li> <li> <a href="#conclusion">Conclusion</a> </li> </ul> <p>C++20 introduced the <code class="language-plaintext highlighter-rouge">[[likely]]</code> and <code class="language-plaintext highlighter-rouge">[[unlikely]]</code> attributes. A quick search of these terms returns numerous articles warning that usage of these attributes is “perilous” <sup id="fnref:7"><a href="#fn:7" class="footnote" rel="footnote" role="doc-noteref">1</a></sup>; that they should not be used at all <sup id="fnref:8"><a href="#fn:8" class="footnote" rel="footnote" role="doc-noteref">2</a></sup>; and that using them is HGO: “hunch guided optimisation” <sup id="fnref:9"><a href="#fn:9" class="footnote" rel="footnote" role="doc-noteref">3</a></sup>. And yet, the cppreference page shows a function using <code class="language-plaintext highlighter-rouge">[[likely]]</code> and <code class="language-plaintext highlighter-rouge">[[unlikely]]</code> is faster than an otherwise identical function without them <sup id="fnref:15"><a href="#fn:15" class="footnote" rel="footnote" role="doc-noteref">4</a></sup>. In this post I’ll attempt to break down how these attributes affect the layout of the emitted assembly, and hopefully give a better idea of when (if ever) they may be useful.</p> <p>Whilst the aim of using <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code> is to write better performing code, reasoning about performance differences between code which differs only in layout is largely an examination of cache performance. Since cache behaviour is extremely volatile between systems, I won’t be providing any benchmarks, and encourage you to do your own.</p> <p>I initially assumed that these attributes would somehow leave hints to the branch prediction unit (BPU) in the CPU to aid in predicting whether a conditional branch was taken or untaken. However, this won’t be the focus of this post. Whether branch prediction hints are supported and emitted is completely dependent on the processor generation <sup id="fnref:17"><a href="#fn:17" class="footnote" rel="footnote" role="doc-noteref">5</a></sup> and compiler version <sup id="fnref:18"><a href="#fn:18" class="footnote" rel="footnote" role="doc-noteref">6</a></sup>. I recommend resources such as Agner Fog’s manuals <sup id="fnref:17:1"><a href="#fn:17" class="footnote" rel="footnote" role="doc-noteref">5</a></sup> for great references for your microarchitecture, and checking the machine code generated by your compiler for hints. For quick context, between Intel Pentium 4 and Redwood Cove architectures, branch prediction hints were largely ignored <sup id="fnref:17:2"><a href="#fn:17" class="footnote" rel="footnote" role="doc-noteref">5</a></sup> <sup id="fnref:16"><a href="#fn:16" class="footnote" rel="footnote" role="doc-noteref">7</a></sup>.</p> <h2 id="background-code-layout">Background: Code Layout</h2> <p>Wherever a compiler sees a conditional branch, a decision must be made as to whether the (spatially) subsequent instructions should be the “taken” path (and have a “jump” instruction to code which contains the “untaken” path) or the “untaken” path (and have “jump” to the “taken” path). For a toy example, should the following C code;</p> <div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+</pre></td> <td class="rouge-code"><pre><span class="kt">int</span> <span class="nf">func</span><span class="p">(</span><span class="kt">int</span> <span class="n">x</span><span class="p">,</span> <span class="kt">int</span> <span class="n">y</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">x</span> <span class="o">==</span> <span class="mi">10</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">return</span> <span class="o">-</span><span class="mi">1</span><span class="p">;</span>
+    <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+        <span class="kt">int</span> <span class="n">b</span> <span class="o">=</span> <span class="n">y</span> <span class="o">+</span> <span class="mi">20</span><span class="p">;</span>
+        <span class="k">return</span> <span class="n">b</span><span class="p">;</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>be compiled into assembly looking something like;</p> <div class="language-haskell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+</pre></td> <td class="rouge-code"><pre><span class="n">func</span><span class="p">(</span><span class="n">int</span><span class="p">,</span> <span class="n">int</span><span class="p">)</span><span class="o">:</span>
+  <span class="n">push</span> <span class="p">{</span><span class="n">r11</span><span class="p">,</span> <span class="n">lr</span><span class="p">}</span>
+  <span class="n">cmp</span> <span class="n">r0</span><span class="p">,</span> <span class="o">#</span><span class="mi">10</span>
+  <span class="n">bne</span> <span class="o">.</span><span class="kt">ELSE</span>
+  <span class="n">mov</span> <span class="n">r3</span><span class="p">,</span> <span class="o">#-</span><span class="mi">1</span>
+  <span class="n">b</span> <span class="o">.</span><span class="kt">RET</span>
+
+<span class="o">.</span><span class="kt">ELSE</span>
+  <span class="n">add</span> <span class="n">r3</span><span class="p">,</span> <span class="n">r3</span><span class="p">,</span> <span class="o">#</span><span class="mi">20</span>
+
+<span class="o">.</span><span class="kt">RET</span>
+  <span class="n">pop</span> <span class="p">{</span><span class="n">r11</span><span class="p">,</span> <span class="n">pc</span><span class="p">}</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>where the condition <code class="language-plaintext highlighter-rouge">x == 10</code> being <code class="language-plaintext highlighter-rouge">false</code> results in the conditional branches being taken? or instead, something like;</p> <div class="language-haskell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+</pre></td> <td class="rouge-code"><pre><span class="n">func</span><span class="p">(</span><span class="n">int</span><span class="p">,</span> <span class="n">int</span><span class="p">)</span><span class="o">:</span>
+  <span class="n">push</span> <span class="p">{</span><span class="n">r11</span><span class="p">,</span> <span class="n">lr</span><span class="p">}</span>
+  <span class="n">cmp</span> <span class="n">r0</span><span class="p">,</span> <span class="o">#</span><span class="mi">10</span>
+  <span class="n">beq</span> <span class="o">.</span><span class="kt">IF</span>
+  <span class="n">add</span> <span class="n">r3</span><span class="p">,</span> <span class="n">r3</span><span class="p">,</span> <span class="o">#</span><span class="mi">20</span>
+  <span class="n">b</span> <span class="o">.</span><span class="kt">RET</span>
+
+<span class="o">.</span><span class="kt">IF</span>
+  <span class="n">mov</span> <span class="n">r3</span><span class="p">,</span> <span class="o">#-</span><span class="mi">1</span>
+
+<span class="o">.</span><span class="kt">RET</span>
+  <span class="n">pop</span> <span class="p">{</span><span class="n">r11</span><span class="p">,</span> <span class="n">pc</span><span class="p">}</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>where the condition <code class="language-plaintext highlighter-rouge">x == 10</code> being <code class="language-plaintext highlighter-rouge">true</code> means the conditional branch is taken? Or maybe something else, like a conditional move?</p> <p>In general, compilers aim to <em>maximise the number of fallthrough branches</em>, meaning the compiler would like to place conditional jump instructions so they are <em>not</em> taken most of the time. This is often referred to as maximising the <em>straight-line sequence</em>, because a contiguous (“straight line”) block of instructions are executed, rather than <code class="language-plaintext highlighter-rouge">JMP</code>ing around the instruction address space. Such straight-line sequences are preferred for a few reasons. For one, they reduce the size of the instruction cache’s working-set size <sup id="fnref:1"><a href="#fn:1" class="footnote" rel="footnote" role="doc-noteref">8</a></sup>. Fetching a cache line brings multiple contiguous instructions into the cache. If the next instruction to be executed is the instruction contiguous in memory from the previous, then that next instruction is more likely to be in cache. For straight line sequences and beyond, check out <sup id="fnref:4"><a href="#fn:4" class="footnote" rel="footnote" role="doc-noteref">9</a></sup>.</p> <p>But how does a compiler - at <em>compile-time</em> - know which condition is more likely at runtime, so that it may order blocks accordingly? We will look at how both <code class="language-plaintext highlighter-rouge">gcc</code> and <code class="language-plaintext highlighter-rouge">clang</code> decide which branch to make the fallthrough, but both compilers use the code contained within in the conditional branch to decide which path is most likely to be executed.</p> <p>A good place to start with <code class="language-plaintext highlighter-rouge">gcc</code> is their <code class="language-plaintext highlighter-rouge">predict.def</code> <sup id="fnref:5"><a href="#fn:5" class="footnote" rel="footnote" role="doc-noteref">10</a></sup>. This file defines a number of “predictors” which attribute a particular code pattern to a probability. For example, <code class="language-plaintext highlighter-rouge">gcc</code> considers the return value of <code class="language-plaintext highlighter-rouge">malloc</code> to almost always be non-null; considers branches which cause an early-return unlikely; and considers branches which return constants also unlikely. To see how <code class="language-plaintext highlighter-rouge">gcc</code> uses these “predictions”, we can look at the “profile tree” <sup id="fnref:2"><a href="#fn:2" class="footnote" rel="footnote" role="doc-noteref">11</a></sup> which is outputted when compiling with the <code class="language-plaintext highlighter-rouge">-fdump-tree-profile_estimate</code> flag. The outputted file contains the GIMPLE representation of the source code, along with annotations using static heuristics and profile data (if present). For now, we are only concerned with the static heuristics.</p> <p>For a slightly more interesting example, consider the function below. There is a conditional branch which is encountered some number of times in a loop, and whose taken path contains a call to <code class="language-plaintext highlighter-rouge">std::vector::push_back</code>.</p> <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+</pre></td> <td class="rouge-code"><pre><span class="k">auto</span>
+<span class="n">noattr</span><span class="p">(</span><span class="k">const</span> <span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;&amp;</span> <span class="n">in</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="p">{</span>
+    <span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="n">out</span><span class="p">;</span>
+    <span class="k">for</span> <span class="p">(</span><span class="k">const</span> <span class="kt">int</span> <span class="n">x</span> <span class="o">:</span> <span class="n">in</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">x</span> <span class="o">&gt;</span> <span class="n">CONSTANT</span><span class="p">)</span> <span class="p">{</span>
+            <span class="n">out</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">x</span><span class="p">);</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="n">out</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>Below is an abridged extract of the profile output regarding the <code class="language-plaintext highlighter-rouge">noattr</code> function.</p> <div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+</pre></td> <td class="rouge-code"><pre><span class="p">;;</span> <span class="n">Function</span> <span class="n">noattr</span> <span class="p">(...)</span>
+<span class="p">...</span>
+<span class="n">Predictions</span> <span class="k">for</span> <span class="n">bb</span> <span class="mi">3</span>
+  <span class="n">DS</span> <span class="n">theory</span> <span class="n">heuristics</span><span class="o">:</span> <span class="mi">33</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span>
+  <span class="n">combined</span> <span class="n">heuristics</span><span class="o">:</span> <span class="mi">33</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span>
+  <span class="n">call</span> <span class="n">heuristics</span> <span class="n">of</span> <span class="n">edge</span> <span class="mi">3</span><span class="o">-&gt;</span><span class="mi">4</span><span class="o">:</span> <span class="mi">33</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span>
+<span class="p">...</span>
+<span class="o">&lt;</span><span class="n">bb</span> <span class="mi">3</span><span class="o">&gt;</span> <span class="p">[</span><span class="n">local</span> <span class="n">count</span><span class="o">:</span> <span class="mi">1073312329</span><span class="p">]</span><span class="o">:</span>
+  <span class="p">...</span>
+  <span class="n">_2</span> <span class="o">=</span> <span class="o">*</span><span class="n">SR</span><span class="p">.</span><span class="mi">76</span><span class="n">_30</span><span class="p">;</span>
+  <span class="n">x</span> <span class="o">=</span> <span class="n">_2</span><span class="p">;</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">_2</span> <span class="o">&gt;</span> <span class="mi">10</span><span class="p">)</span>
+    <span class="k">goto</span> <span class="o">&lt;</span><span class="n">bb</span> <span class="mi">4</span><span class="o">&gt;</span><span class="p">;</span> <span class="p">[</span><span class="mi">33</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span><span class="p">]</span>
+  <span class="k">else</span>
+    <span class="k">goto</span> <span class="o">&lt;</span><span class="n">bb</span> <span class="mi">5</span><span class="o">&gt;</span><span class="p">;</span> <span class="p">[</span><span class="mi">67</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span><span class="p">]</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p><code class="language-plaintext highlighter-rouge">gcc</code> has kindly annotated the branches with the probability it has assigned them, as well as all the heuristics used to determine those probabilities. In this case its using the “call” heuristic (where the “call” here is to <code class="language-plaintext highlighter-rouge">push_back</code>) to estimate that most of the time, <code class="language-plaintext highlighter-rouge">x</code> will not be greater than <code class="language-plaintext highlighter-rouge">10</code> (33% of the time, to be precise). Sure enough, in the generated assembly, we have:</p> <div class="language-haskell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+</pre></td> <td class="rouge-code"><pre><span class="n">cmp</span> <span class="n">r3</span><span class="p">,</span> <span class="o">#</span><span class="mi">10</span>
+<span class="n">ble</span> <span class="o">.</span><span class="kt">L23</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>i.e. the branch is <em>taken</em> if <code class="language-plaintext highlighter-rouge">x</code> is less than or equal to <code class="language-plaintext highlighter-rouge">10</code>: the case the <code class="language-plaintext highlighter-rouge">gcc</code> thinks is less likely.</p> <p>There is no <code class="language-plaintext highlighter-rouge">clang</code> equivalent of the profile tree, but we can take a look at some key files to determine how branches are predicted. <a href="https://llvm.org/doxygen/BranchProbabilityInfo_8h_source.html" rel="external nofollow noopener" target="_blank">BranchProbabilityInfo.h</a> <sup id="fnref:10"><a href="#fn:10" class="footnote" rel="footnote" role="doc-noteref">12</a></sup> gives a nice description of the algorithm, but we turn to <a href="https://llvm.org/doxygen/BranchProbabilityInfo_8cpp_source.html#l01221" rel="external nofollow noopener" target="_blank">BranchProbabilityInfo.cpp</a> <sup id="fnref:11"><a href="#fn:11" class="footnote" rel="footnote" role="doc-noteref">13</a></sup>, and specifically the <code class="language-plaintext highlighter-rouge">calculate</code> function on line <code class="language-plaintext highlighter-rouge">1221</code>, to see the closest equivalent to <code class="language-plaintext highlighter-rouge">gcc</code>’s <code class="language-plaintext highlighter-rouge">predict.def</code>. In this small block, we can see most of <code class="language-plaintext highlighter-rouge">clang</code>’s branch prediction logic:</p> <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+</pre></td> <td class="rouge-code"><pre><span class="k">if</span> <span class="p">(</span><span class="n">calcMetadataWeights</span><span class="p">(</span><span class="n">BB</span><span class="p">))</span>
+  <span class="k">continue</span><span class="p">;</span>
+<span class="k">if</span> <span class="p">(</span><span class="n">calcEstimatedHeuristics</span><span class="p">(</span><span class="n">BB</span><span class="p">))</span>
+  <span class="k">continue</span><span class="p">;</span>
+<span class="k">if</span> <span class="p">(</span><span class="n">calcPointerHeuristics</span><span class="p">(</span><span class="n">BB</span><span class="p">))</span>
+  <span class="k">continue</span><span class="p">;</span>
+<span class="k">if</span> <span class="p">(</span><span class="n">calcZeroHeuristics</span><span class="p">(</span><span class="n">BB</span><span class="p">,</span> <span class="n">TLI</span><span class="p">))</span>
+  <span class="k">continue</span><span class="p">;</span>
+<span class="k">if</span> <span class="p">(</span><span class="n">calcFloatingPointHeuristics</span><span class="p">(</span><span class="n">BB</span><span class="p">))</span>
+  <span class="k">continue</span><span class="p">;</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>Let’s ignore <code class="language-plaintext highlighter-rouge">calcMetadataWeights</code> and <code class="language-plaintext highlighter-rouge">calcEstimatedHeurisitcs</code> for now. Notice how only one heuristic/source of probability is considered, and there is an explicit order. For instance, if <code class="language-plaintext highlighter-rouge">calcZeroHeuristics</code> returns <code class="language-plaintext highlighter-rouge">true</code> (meaning that heurisitic was applied), then the heuristics in <code class="language-plaintext highlighter-rouge">calcFloatingPointHeuristics</code> are not considered. <code class="language-plaintext highlighter-rouge">clang</code> uses a number of <code class="language-plaintext highlighter-rouge">ProbabilityTables</code> to store the estimated probabilities of various local events. For example, here is the <code class="language-plaintext highlighter-rouge">PointerTable</code> (found at the top of <code class="language-plaintext highlighter-rouge">BranchProbabilityInfo.cpp</code>):</p> <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+</pre></td> <td class="rouge-code"><pre><span class="k">static</span> <span class="k">const</span> <span class="n">ProbabilityTable</span> <span class="n">PointerTable</span><span class="p">{</span>
+    <span class="p">{</span><span class="n">ICmpInst</span><span class="o">::</span><span class="n">ICMP_NE</span><span class="p">,</span> <span class="p">{</span><span class="n">PtrTakenProb</span><span class="p">,</span> <span class="n">PtrUntakenProb</span><span class="p">}},</span> <span class="c1">/// p != q -&gt; Likely</span>
+    <span class="p">{</span><span class="n">ICmpInst</span><span class="o">::</span><span class="n">ICMP_EQ</span><span class="p">,</span> <span class="p">{</span><span class="n">PtrUntakenProb</span><span class="p">,</span> <span class="n">PtrTakenProb</span><span class="p">}},</span> <span class="c1">/// p == q -&gt; Unlikely</span>
+<span class="p">};</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>which stores <code class="language-plaintext highlighter-rouge">{probability evaluates to true, probability evaluates to false}</code> for a given condition. The <code class="language-plaintext highlighter-rouge">PtrTakenProb</code> are hardcoded values in the top of this <code class="language-plaintext highlighter-rouge">cpp</code> file.</p> <p>So <code class="language-plaintext highlighter-rouge">clang</code> thinks that pointers are not likely to be equal. What about <code class="language-plaintext highlighter-rouge">calcZeroHeuristics</code>? Interestingly, there are quite a few special cases considered, for example, special behaviour with <code class="language-plaintext highlighter-rouge">AND</code>ing with a single bit;</p> <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+</pre></td> <td class="rouge-code"><pre><span class="c1">// If the LHS is the result of AND'ing a value with a single bit bitmask,</span>
+<span class="c1">// we don't have information about probabilities.</span>
+<span class="k">if</span> <span class="p">(</span><span class="n">Instruction</span> <span class="o">*</span><span class="n">LHS</span> <span class="o">=</span> <span class="n">dyn_cast</span><span class="o">&lt;</span><span class="n">Instruction</span><span class="o">&gt;</span><span class="p">(</span><span class="n">CI</span><span class="o">-&gt;</span><span class="n">getOperand</span><span class="p">(</span><span class="mi">0</span><span class="p">)))</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">LHS</span><span class="o">-&gt;</span><span class="n">getOpcode</span><span class="p">()</span> <span class="o">==</span> <span class="n">Instruction</span><span class="o">::</span><span class="n">And</span><span class="p">)</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">ConstantInt</span> <span class="o">*</span><span class="n">AndRHS</span> <span class="o">=</span> <span class="n">GetConstantInt</span><span class="p">(</span><span class="n">LHS</span><span class="o">-&gt;</span><span class="n">getOperand</span><span class="p">(</span><span class="mi">1</span><span class="p">)))</span>
+      <span class="k">if</span> <span class="p">(</span><span class="n">AndRHS</span><span class="o">-&gt;</span><span class="n">getValue</span><span class="p">().</span><span class="n">isPowerOf2</span><span class="p">())</span>
+        <span class="k">return</span> <span class="nb">false</span><span class="p">;</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>and return values of library functions;</p> <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+</pre></td> <td class="rouge-code"><pre><span class="c1">// Check if the LHS is the return value of a library function</span>
+<span class="n">LibFunc</span> <span class="n">Func</span> <span class="o">=</span> <span class="n">LibFunc</span><span class="o">::</span><span class="n">NotLibFunc</span><span class="p">;</span>
+<span class="k">if</span> <span class="p">(</span><span class="n">TLI</span><span class="p">)</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">CallInst</span> <span class="o">*</span><span class="n">Call</span> <span class="o">=</span> <span class="n">dyn_cast</span><span class="o">&lt;</span><span class="n">CallInst</span><span class="o">&gt;</span><span class="p">(</span><span class="n">CI</span><span class="o">-&gt;</span><span class="n">getOperand</span><span class="p">(</span><span class="mi">0</span><span class="p">)))</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">Function</span> <span class="o">*</span><span class="n">CalledFn</span> <span class="o">=</span> <span class="n">Call</span><span class="o">-&gt;</span><span class="n">getCalledFunction</span><span class="p">())</span>
+      <span class="n">TLI</span><span class="o">-&gt;</span><span class="n">getLibFunc</span><span class="p">(</span><span class="o">*</span><span class="n">CalledFn</span><span class="p">,</span> <span class="n">Func</span><span class="p">);</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>are treated individually. Similarly to pointer comparisons, we see from the <code class="language-plaintext highlighter-rouge">ICmpWithZeroTable</code> that <code class="language-plaintext highlighter-rouge">clang</code> predicts comparisons with <code class="language-plaintext highlighter-rouge">0</code> are unlikely to be true, as well as comparisons of values less than <code class="language-plaintext highlighter-rouge">0</code> are unlikely. Notice that these rules essentially mirror <code class="language-plaintext highlighter-rouge">gcc</code>’s “predict comparisons with a negative constant as unlikely”, found in <code class="language-plaintext highlighter-rouge">predict.def</code>.</p> <p>We’ve seen that both <code class="language-plaintext highlighter-rouge">clang</code> and <code class="language-plaintext highlighter-rouge">gcc</code> assign probabilities to branches based on some static heuristics. However, these heuristics could be called quite primitive, and the probabilities assigned are static, hardcoded values, with little indication of how they were chosen.</p> <h3 id="how-unlikely-affects-branch-probabilities">How <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code> affects branch probabilities</h3> <p>Consider the following two functions, both of whom are identical to the previously defined <code class="language-plaintext highlighter-rouge">noattr</code>, aside from the fact the conditionals in the loop are now annotated with <code class="language-plaintext highlighter-rouge">[[likely]]</code> in the first, and <code class="language-plaintext highlighter-rouge">[[unlikely]]</code> in the second:</p> <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+</pre></td> <td class="rouge-code"><pre><span class="k">auto</span>
+<span class="n">likely</span><span class="p">(</span><span class="k">const</span> <span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;&amp;</span> <span class="n">in</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="p">{</span>
+    <span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="n">out</span><span class="p">;</span>
+    <span class="k">for</span> <span class="p">(</span><span class="k">const</span> <span class="kt">int</span> <span class="n">x</span> <span class="o">:</span> <span class="n">in</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">x</span> <span class="o">&gt;</span> <span class="n">CONSTANT</span><span class="p">)</span> <span class="p">[[</span><span class="n">likely</span><span class="p">]]</span> <span class="p">{</span>
+            <span class="n">out</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">x</span><span class="p">);</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="n">out</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+</pre></td> <td class="rouge-code"><pre><span class="k">auto</span>
+<span class="n">unlikely</span><span class="p">(</span><span class="k">const</span> <span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;&amp;</span> <span class="n">in</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="p">{</span>
+    <span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="n">out</span><span class="p">;</span>
+    <span class="k">for</span> <span class="p">(</span><span class="k">const</span> <span class="kt">int</span> <span class="n">x</span> <span class="o">:</span> <span class="n">in</span><span class="p">)</span> <span class="p">{</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">x</span> <span class="o">&gt;</span> <span class="n">CONSTANT</span><span class="p">)</span> <span class="p">[[</span><span class="n">unlikely</span><span class="p">]]</span> <span class="p">{</span>
+            <span class="n">out</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">x</span><span class="p">);</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="n">out</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>Let’s have a look at the equivalent profile tree for the <code class="language-plaintext highlighter-rouge">likely</code> function:</p> <div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+</pre></td> <td class="rouge-code"><pre><span class="p">;;</span> <span class="n">Function</span> <span class="n">likely</span> <span class="p">(...)</span>
+<span class="p">...</span>
+<span class="n">Predictions</span> <span class="k">for</span> <span class="n">bb</span> <span class="mi">3</span>
+  <span class="n">first</span> <span class="n">match</span> <span class="n">heuristics</span><span class="o">:</span> <span class="mi">90</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span>
+  <span class="n">combined</span> <span class="n">heuristics</span><span class="o">:</span> <span class="mi">90</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span>
+  <span class="n">call</span> <span class="n">heuristics</span> <span class="n">of</span> <span class="n">edge</span> <span class="mi">3</span><span class="o">-&gt;</span><span class="mi">4</span> <span class="p">(</span><span class="n">ignored</span><span class="p">)</span><span class="o">:</span> <span class="mi">33</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span>
+  <span class="n">hot</span> <span class="n">label</span> <span class="n">heuristics</span> <span class="n">of</span> <span class="n">edge</span> <span class="mi">3</span><span class="o">-&gt;</span><span class="mi">4</span><span class="o">:</span> <span class="mi">90</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span>
+<span class="p">...</span>
+<span class="o">&lt;</span><span class="n">bb</span> <span class="mi">3</span><span class="o">&gt;</span> <span class="p">[</span><span class="n">local</span> <span class="n">count</span><span class="o">:</span> <span class="mi">955630224</span><span class="p">]</span><span class="o">:</span>
+  <span class="p">...</span>
+  <span class="n">_2</span> <span class="o">=</span> <span class="o">*</span><span class="n">SR</span><span class="p">.</span><span class="mi">83</span><span class="n">_31</span><span class="p">;</span>
+  <span class="n">x</span> <span class="o">=</span> <span class="n">_2</span><span class="p">;</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">_2</span> <span class="o">&gt;</span> <span class="mo">00</span><span class="p">)</span>
+    <span class="k">goto</span> <span class="o">&lt;</span><span class="n">bb</span> <span class="mi">4</span><span class="o">&gt;</span><span class="p">;</span> <span class="p">[</span><span class="mi">90</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span><span class="p">]</span>
+  <span class="k">else</span>
+    <span class="k">goto</span> <span class="o">&lt;</span><span class="n">bb</span> <span class="mi">5</span><span class="o">&gt;</span><span class="p">;</span> <span class="p">[</span><span class="mi">10</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span><span class="p">]</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>It is almost identical to the previous output for <code class="language-plaintext highlighter-rouge">noattr</code>, but with the addition of: <code class="language-plaintext highlighter-rouge">hot label heuristics of edge 3-&gt;4: 90.00%</code>, and <code class="language-plaintext highlighter-rouge">ignored</code> added to the previously considered <code class="language-plaintext highlighter-rouge">call</code> heuristic.</p> <p>The profile tree for <code class="language-plaintext highlighter-rouge">unlikely</code> shows the same, in the opposite direction:</p> <div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+</pre></td> <td class="rouge-code"><pre><span class="p">;;</span> <span class="n">Function</span> <span class="n">likely</span> <span class="p">(...)</span>
+<span class="p">...</span>
+<span class="n">Predictions</span> <span class="k">for</span> <span class="n">bb</span> <span class="mi">3</span>
+  <span class="n">first</span> <span class="n">match</span> <span class="n">heuristics</span><span class="o">:</span> <span class="mi">10</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span>
+  <span class="n">combined</span> <span class="n">heuristics</span><span class="o">:</span> <span class="mi">10</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span>
+  <span class="n">call</span> <span class="n">heuristics</span> <span class="n">of</span> <span class="n">edge</span> <span class="mi">3</span><span class="o">-&gt;</span><span class="mi">4</span> <span class="p">(</span><span class="n">ignored</span><span class="p">)</span><span class="o">:</span> <span class="mi">33</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span>
+  <span class="n">cold</span> <span class="n">label</span> <span class="n">heuristics</span> <span class="n">of</span> <span class="n">edge</span> <span class="mi">3</span><span class="o">-&gt;</span><span class="mi">4</span><span class="o">:</span> <span class="mi">10</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span>
+<span class="p">...</span>
+<span class="o">&lt;</span><span class="n">bb</span> <span class="mi">3</span><span class="o">&gt;</span> <span class="p">[</span><span class="n">local</span> <span class="n">count</span><span class="o">:</span> <span class="mi">955630224</span><span class="p">]</span><span class="o">:</span>
+  <span class="p">...</span>
+  <span class="n">_2</span> <span class="o">=</span> <span class="o">*</span><span class="n">SR</span><span class="p">.</span><span class="mi">90</span><span class="n">_31</span><span class="p">;</span>
+  <span class="n">x</span> <span class="o">=</span> <span class="n">_2</span><span class="p">;</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">_2</span> <span class="o">&gt;</span> <span class="mi">10</span><span class="p">)</span>
+    <span class="k">goto</span> <span class="o">&lt;</span><span class="n">bb</span> <span class="mi">4</span><span class="o">&gt;</span><span class="p">;</span> <span class="p">[</span><span class="mi">10</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span><span class="p">]</span>
+  <span class="k">else</span>
+    <span class="k">goto</span> <span class="o">&lt;</span><span class="n">bb</span> <span class="mi">5</span><span class="o">&gt;</span><span class="p">;</span> <span class="p">[</span><span class="mi">90</span><span class="p">.</span><span class="mo">00</span><span class="o">%</span><span class="p">]</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>In <code class="language-plaintext highlighter-rouge">gcc</code>, the <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code> attributes override the branch probability heuristics that would otherwise be used. The probabilities are then overridden by a constant: 90% probability for <code class="language-plaintext highlighter-rouge">[[likely]]</code>, 10% probability for <code class="language-plaintext highlighter-rouge">[[unlikely]]</code>. This ensures that the path (respectively, the opposite path to that) which is marked <code class="language-plaintext highlighter-rouge">[[likely]]</code> (respectively, <code class="language-plaintext highlighter-rouge">[[unlikely]]</code> ) is optimised for - in the sense that it is made the fallthrough block.</p> <p>Examining the assembly of the above functions <sup id="fnref:6"><a href="#fn:6" class="footnote" rel="footnote" role="doc-noteref">14</a></sup>, we see for <code class="language-plaintext highlighter-rouge">likely</code>;</p> <div class="language-haskell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+</pre></td> <td class="rouge-code"><pre><span class="n">cmp</span> <span class="n">r3</span><span class="p">,</span> <span class="o">#</span><span class="mi">10</span>
+<span class="n">ble</span> <span class="o">.</span><span class="kt">L34</span> <span class="p">;</span> <span class="n">next</span> <span class="n">loop</span> <span class="n">iteration</span>
+<span class="o">...</span>
+<span class="p">;</span> <span class="n">fallthrough</span><span class="o">:</span> <span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">::</span><span class="n">push_back</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>i.e. the branch is taken in the case that <code class="language-plaintext highlighter-rouge">x</code> is not greater than <code class="language-plaintext highlighter-rouge">10</code>: the opposite path to what was marked <code class="language-plaintext highlighter-rouge">[[likely]]</code>. And for <code class="language-plaintext highlighter-rouge">unlikely</code>;</p> <div class="language-haskell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+</pre></td> <td class="rouge-code"><pre><span class="n">cmp</span> <span class="n">r3</span><span class="p">,</span> <span class="o">#</span><span class="mi">10</span>
+<span class="n">bgt</span> <span class="o">.</span><span class="kt">L20</span> <span class="p">;</span> <span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">::</span><span class="n">push_back</span>
+<span class="o">...</span>
+<span class="p">;</span> <span class="n">fallthrough</span><span class="o">:</span> <span class="n">next</span> <span class="n">loop</span> <span class="n">iteration</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>i.e. the branch is taken in the path marked <code class="language-plaintext highlighter-rouge">[[unlikely]]</code>.</p> <p>Since <code class="language-plaintext highlighter-rouge">clang</code> does not have a profile tree output, we will take a look at the source code. <code class="language-plaintext highlighter-rouge">clang</code> lowers <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code> to their <code class="language-plaintext highlighter-rouge">__builtin_expect()</code> intrinsic. This builtin takes two arguments: an expression to be annotated, and a Boolean to declare whether we expect the expression to evaluate to <code class="language-plaintext highlighter-rouge">true</code> or <code class="language-plaintext highlighter-rouge">false</code>. For example, <code class="language-plaintext highlighter-rouge">__builtin_expect(x &gt; 0, 0)</code> declares that it is likely that <code class="language-plaintext highlighter-rouge">x &gt; 0</code> evaluates to <code class="language-plaintext highlighter-rouge">false</code> (<code class="language-plaintext highlighter-rouge">0</code>).</p> <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+</pre></td> <td class="rouge-code"><pre><span class="n">llvm</span><span class="o">::</span><span class="n">Value</span> <span class="o">*</span>
+<span class="n">CodeGenFunction</span><span class="o">::</span><span class="n">emitCondLikelihoodViaExpectIntrinsic</span><span class="p">(</span><span class="n">llvm</span><span class="o">::</span><span class="n">Value</span> <span class="o">*</span><span class="n">Cond</span><span class="p">,</span>
+                                                      <span class="n">Stmt</span><span class="o">::</span><span class="n">Likelihood</span> <span class="n">LH</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">switch</span> <span class="p">(</span><span class="n">LH</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">case</span> <span class="n">Stmt</span><span class="o">::</span><span class="n">LH_None</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">Cond</span><span class="p">;</span>
+  <span class="k">case</span> <span class="n">Stmt</span><span class="o">::</span><span class="n">LH_Likely</span><span class="p">:</span>
+  <span class="k">case</span> <span class="n">Stmt</span><span class="o">::</span><span class="n">LH_Unlikely</span><span class="p">:</span>
+    <span class="p">...</span>
+    <span class="n">llvm</span><span class="o">::</span><span class="n">Type</span> <span class="o">*</span><span class="n">CondTy</span> <span class="o">=</span> <span class="n">Cond</span><span class="o">-&gt;</span><span class="n">getType</span><span class="p">();</span>
+    <span class="p">...</span>
+    <span class="n">llvm</span><span class="o">::</span><span class="n">Value</span> <span class="o">*</span><span class="n">ExpectedValueOfCond</span> <span class="o">=</span>
+        <span class="n">llvm</span><span class="o">::</span><span class="n">ConstantInt</span><span class="o">::</span><span class="n">getBool</span><span class="p">(</span><span class="n">CondTy</span><span class="p">,</span> <span class="n">LH</span> <span class="o">==</span> <span class="n">Stmt</span><span class="o">::</span><span class="n">LH_Likely</span><span class="p">);</span>
+    <span class="k">return</span> <span class="n">Builder</span><span class="p">.</span><span class="n">CreateCall</span><span class="p">(</span><span class="n">FnExpect</span><span class="p">,</span> <span class="p">{</span><span class="n">Cond</span><span class="p">,</span> <span class="n">ExpectedValueOfCond</span><span class="p">},</span>
+                              <span class="n">Cond</span><span class="o">-&gt;</span><span class="n">getName</span><span class="p">()</span> <span class="o">+</span> <span class="s">".expval"</span><span class="p">);</span>
+  <span class="p">}</span>
+  <span class="n">llvm_unreachable</span><span class="p">(</span><span class="s">"Unknown Likelihood"</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>The call to <code class="language-plaintext highlighter-rouge">ConstantInt::getBool</code> gets the second argument for the builtin, so the <code class="language-plaintext highlighter-rouge">{Cond, ExpectedValueOfCond}</code> contains the arguments to pass to <code class="language-plaintext highlighter-rouge">__builtin_expect</code>. The above function is called in <code class="language-plaintext highlighter-rouge">CodeGenFunction::EmitBranchOnBoolExpr</code> <sup id="fnref:20"><a href="#fn:20" class="footnote" rel="footnote" role="doc-noteref">15</a></sup> when emitting conditional branches.</p> <p>Next, the <code class="language-plaintext highlighter-rouge">__builtin_expect()</code> is lowered to LLVM IR in a few passes, which is a bit too detailed to get into here, but a good starting point is <a href="https://llvm.org/doxygen/LowerExpectIntrinsic_8cpp_source.html" rel="external nofollow noopener" target="_blank">LowerExpectIntrinsic.cpp</a> <sup id="fnref:19"><a href="#fn:19" class="footnote" rel="footnote" role="doc-noteref">16</a></sup>. This lowering then provides branch probability info which is considered in the <code class="language-plaintext highlighter-rouge">calcMetadataWeights()</code> function that we saw earlier in <code class="language-plaintext highlighter-rouge">BranchProbabilityInfo.cpp</code>. Recall that if that metadata on branch weights exist, the other static heuristics are not used.</p> <p>So we can see that the way <code class="language-plaintext highlighter-rouge">clang</code> handles the attribute annotations is similar to <code class="language-plaintext highlighter-rouge">gcc</code> in two ways:</p> <ol> <li> <p><code class="language-plaintext highlighter-rouge">[[(un)likely]]</code> attributes dominate other static heuristics, and;</p> </li> <li> <p><code class="language-plaintext highlighter-rouge">[[likely]]</code> (respectively, <code class="language-plaintext highlighter-rouge">[[unlikely]]</code>) always ensures the annotated branch is optimised for (respectively, pessimised).</p> </li> </ol> <blockquote> <p>We can conclude that one should use the <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code> attributes if and only if they wish to override the code layout that the compiler would otherwise generate.</p> </blockquote> <p>From <code class="language-plaintext highlighter-rouge">gcc</code>’s <code class="language-plaintext highlighter-rouge">predict.def</code> and <code class="language-plaintext highlighter-rouge">clang</code>’s heuristics, we can see that it is not necessary to use the attributes to annotate functions which are obviously cold/error paths. For example, annotations on conditionals such as; contains the arguments to the intrinsic.</p> <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+6
+</pre></td> <td class="rouge-code"><pre><span class="k">constexpr</span> <span class="kt">int</span> <span class="n">ERROR_CODE</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">;</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="n">bad_condition</span><span class="p">)</span> <span class="p">[[</span><span class="n">unlikely</span><span class="p">]]</span> <span class="p">{</span>
+  <span class="c1">// ... handle error</span>
+  <span class="k">return</span> <span class="n">ERROR_CODE</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>or;</p> <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+</pre></td> <td class="rouge-code"><pre><span class="k">if</span> <span class="p">(</span><span class="n">bad_condition</span><span class="p">)</span> <span class="p">[[</span><span class="n">unlikely</span><span class="p">]]</span> <span class="p">{</span>
+  <span class="k">throw</span> <span class="n">my_exception</span><span class="p">(</span><span class="s">"..."</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>will likely have no effect on code layout, since they are both identified as unlikely by static heuristics.</p> <h2 id="applications">Applications</h2> <p>I propose two scenarios in which one may wish to override the code layout the compiler would otherwise generate:</p> <ol> <li>using the programmer’s external knowledge to provide a heuristic in cases otherwise ambiguous to the compiler;</li> <li>overriding a heuristic that the compiler would normally use to determine code layout.</li> </ol> <p>For an example of the first scenario, consider a <code class="language-plaintext highlighter-rouge">if</code> statement with an <code class="language-plaintext highlighter-rouge">else</code> clause, where the code paths combined contain enough instructions that do not fit in a single cache line, and therefore are unlikely to exist in L1i after one fetch. Consider further, that the code in neither condition contain patterns which are identified by static heuristics that we outlined above. Neither return a constant value, neither call a function, etc. The general shape is</p> <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+4
+5
+</pre></td> <td class="rouge-code"><pre><span class="k">if</span> <span class="p">(</span><span class="n">ambiguous</span> <span class="n">condition</span><span class="p">)</span> <span class="p">{</span>
+  <span class="c1">// do inline work</span>
+<span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+  <span class="c1">// do other inline work</span>
+<span class="p">}</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>This <a href="https://godbolt.org/z/Tj561bzcd" rel="external nofollow noopener" target="_blank">godbolt</a> shows an example of a case where <code class="language-plaintext highlighter-rouge">gcc</code> estimates both branches to be equally likely, along with an alternative function which has an <code class="language-plaintext highlighter-rouge">[[unlikely]]</code> annotation, and a diff view of the different code emitted.</p> <p>The <code class="language-plaintext highlighter-rouge">[[unlikely]]</code> attribute has changed the code layout such that the <code class="language-plaintext highlighter-rouge">if</code> path has been swapped with the <code class="language-plaintext highlighter-rouge">else</code> path, and by extension swapped which path is most likely in L1i cache. In this example, the condition (namely <code class="language-plaintext highlighter-rouge">sin(a) == cos(b)</code>) which determines code flow can be reasoned about quite easily. The programmer may well have contextual knowledge on the inputs <code class="language-plaintext highlighter-rouge">a</code> and <code class="language-plaintext highlighter-rouge">b</code> as to how likely this condition is to be true, and be tempted to annotate attributes accordingly.</p> <p>However, this approach is often discouraged <sup id="fnref:8:1"><a href="#fn:8" class="footnote" rel="footnote" role="doc-noteref">2</a></sup> in favour of Profile Guided Optimisation (PGO).</p> <p>PGO <sup id="fnref:12"><a href="#fn:12" class="footnote" rel="footnote" role="doc-noteref">17</a></sup> is a technique to optimise the compiled instructions of a program using <em>dynamic analysis</em> of the execution of a program. PGO involves observing and recording statistics about the execution of a program, and feeding those statistics back in a second compilation of the same program. This second compilation uses the provided statistics to attempt to improve the runtime performance of the program. (PGO is nuanced, and I cannot do the topic justice here. I recommend <sup id="fnref:13"><a href="#fn:13" class="footnote" rel="footnote" role="doc-noteref">18</a></sup> as an introduction.)</p> <h3 id="unlikely-vs-pgo"> <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code> vs PGO</h3> <p>The argument in the above example then becomes: “if <code class="language-plaintext highlighter-rouge">sin(a) == cos(b)</code> is particularly common/rare in production, an instrumented profile will record this, and a PGO compilation will lay out the paths in the most optimal way, without the need for <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code> attributes”. With PGO, there is no need for a developer to possess domain knowledge of the branch likelihoods, and (possibly incorrectly) annotate likely branches.</p> <p>More formally, PGO is often touted as superior to <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code> for reasons such as:</p> <ul> <li> <p>humans are susceptible to incorrectly guessing branch probabilities; statistical profiles (used by PGO) are not,</p> </li> <li> <p>attributes can become outdated as the codebase changes,</p> </li> <li> <p>changes to generated assembly is implementation defined, i.e. changing compilers/architectures will not guarantee the same result.</p> </li> </ul> <p>However, I do not believe the set capabilities of PGO is a superset of the those of <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code>.</p> <p>Profile runs can become outdated just as easily as branches annotated with attributes. Although profiles can be version-controlled along with source code (allowing reducibility of builds, observability of history), there is significantly lower friction with attributes. Since <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code> reside inside the source, there is no extra effort required to manage a separate directory/repository of profile runs. Further, profile runs are not human-readable, whilst I suggest good practice for using attributes is to provide <em>inline</em> documentation as to <em>why</em> a branch was marked with the attribute it was. Not only is this human-readable, but does not require any extra version-control; providing a view of the history of rationale for any annotation. If, upon a refactor, one comes across a justification for an attribute which no longer holds true, it can be removed, with documentation as to why.</p> <p>Moreover, acquiring PGO profiles always require some sacrifice. <em>Instrumentation profiles</em> collect data on (almost) all branches and function calls, and lead to unbounded slowdowns <sup id="fnref:13:1"><a href="#fn:13" class="footnote" rel="footnote" role="doc-noteref">18</a></sup>; unquestionably unsuitable for production. <em>Sampling profiles</em> are a compromise which collect data only at certain intervals (akin to how <code class="language-plaintext highlighter-rouge">perf</code> samples execution time), but are therefore not as accurate as a fully instrumented profile <sup id="fnref:13:2"><a href="#fn:13" class="footnote" rel="footnote" role="doc-noteref">18</a></sup>. The question of which workload to use to collect a sample from is also not straight forward. The profile need be representative for the code paths you wish to optimise for. If a sloppily chosen sample workload is biased towards a code path which in general is not common, it will be optimised for regardless, whilst other paths - which may in fact be more common in real workloads/production - may suffer. A PGO compilation is only as good as its profile. Granted, if there is a workload which you know you would like to optimise for, e.g. common queries in a DBMS, then PGO will often provide speedups with a profile-guided recompilation, with no changes to the source code <sup id="fnref:13:3"><a href="#fn:13" class="footnote" rel="footnote" role="doc-noteref">18</a></sup>.</p> <p>There may also be cases where it is hard to generate a profile for the path you wish to optimise for. This is an instantiation of application 2. I mentioned above.</p> <p>One example that is notorious with the discussion around <code class="language-plaintext highlighter-rouge">[[(un)likely]]]</code>; that of latency-sensitive trading applications which rarely send an order to the exchange, but when they do, need be as fast as possible. Something along the lines of;</p> <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+</pre></td> <td class="rouge-code"><pre><span class="k">if</span> <span class="p">(</span><span class="n">signal</span><span class="p">)</span> <span class="p">{</span>
+  <span class="c1">// send order to exchange</span>
+<span class="p">}</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>Another example, adapted from <sup id="fnref:8:2"><a href="#fn:8" class="footnote" rel="footnote" role="doc-noteref">2</a></sup>, is the case for safety-critical software handling a catastrophic failure. Perhaps;</p> <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+</pre></td> <td class="rouge-code"><pre><span class="k">if</span> <span class="p">(</span><span class="n">critical_failure</span><span class="p">)</span> <span class="p">{</span>
+  <span class="c1">// don't kill people</span>
+<span class="p">}</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>In both cases, <code class="language-plaintext highlighter-rouge">signal</code> and <code class="language-plaintext highlighter-rouge">critical_failure</code> are almost never true in real world workloads of both programs, but are the paths that need be optimised for. Therefore, to achieve that optimisation using PGO, one would need to craft a synthetic workload to produce a profile in which the condition is often true. Such synthetic workloads may be susceptible to inadvertently pessimising other branches in the codebase, which otherwise are the hot path (due to a skewed/misrepresentative workload). Instead of a fake workload, we could write;</p> <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+</pre></td> <td class="rouge-code"><pre><span class="k">if</span> <span class="p">(</span><span class="n">signal</span><span class="p">)</span> <span class="p">[[</span><span class="n">likely</span><span class="p">]]</span> <span class="p">{</span>
+  <span class="c1">// send order to exchange</span>
+<span class="p">}</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>and;</p> <div class="language-cpp highlighter-rouge"><div class="highlight"><pre class="highlight"><code><table class="rouge-table"><tbody><tr>
+<td class="rouge-gutter gl"><pre class="lineno">1
+2
+3
+</pre></td> <td class="rouge-code"><pre><span class="k">if</span> <span class="p">(</span><span class="n">critical_failure</span><span class="p">)</span> <span class="p">[[</span><span class="n">likely</span><span class="p">]]</span> <span class="p">{</span>
+  <span class="c1">// don't kill people</span>
+<span class="p">}</span>
+</pre></td> </tr></tbody></table></code></pre></div></div> <p>Using the attributes in this way is a little abrasive. It feels slightly wrong to write “likely” for a condition which we know is in fact unlikely to evaluate to true. However, in a single annotation we may be able to achieve the desired code layout (as shown above in the previous examples), with no PGO. Perhaps <code class="language-plaintext highlighter-rouge">[[favour]]</code> and <code class="language-plaintext highlighter-rouge">[[disfavour]]</code> would have been more apt names.</p> <h2 id="verifiable-branch-annotation-with-pgo">Verifiable branch annotation with PGO</h2> <p>Rather than pitting branch annotations and PGO against each other, there has been some effort from the LLVM project to make them work together. Given some program source and profile data on that program, <code class="language-plaintext highlighter-rouge">clang-misexpect</code> <sup id="fnref:14"><a href="#fn:14" class="footnote" rel="footnote" role="doc-noteref">19</a></sup> can make <code class="language-plaintext highlighter-rouge">clang</code> emit warnings/reports when the source code contains branch annotations which contradict the profile data. For example, if you annotated a branch as unlikely, but in fact it was almost always the taken path, then <code class="language-plaintext highlighter-rouge">clang-misexpect</code> can catch this, and direct you to the line of the questionable annotation. It is then up to the developers discretion as to whether that annotation should be changed.</p> <p>This workflow provides the empirical verification of branch likelihoods of PGO, whilst maintaining the flexibility to ignore profile results for specific branches with annotations. Also, it allows all your code layout manipulation (in the form of annotations) to be version-controlled and documented inline, as opposed to relying on a separate store of profile data.</p> <p>However, as you may have guessed <code class="language-plaintext highlighter-rouge">clang-misexpect</code> only works when compiling with <code class="language-plaintext highlighter-rouge">clang</code> (and <code class="language-plaintext highlighter-rouge">clang23+</code> at that), adding friction if you also need to target other compilers. Sadder still, is that only the <code class="language-plaintext highlighter-rouge">clang</code>-builtin annotations work - i.e <code class="language-plaintext highlighter-rouge">__builtin_expect(...)</code> - and <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code> are not supported. And since a PGO pipeline is inherently toolchain dependent, we are unlikely to ever see a more portable option.</p> <h2 id="conclusion">Conclusion</h2> <p>If your aim is to try and optimise runtime performance of your program, then PGO is a tried and tested approach, which will likely give you good results. If instead you would like to manipulate the code layout of your generated assembly, then consider <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code>. But be aware of its limitations, and how it will not behave the same across compilers. As always, benchmark on your compiler and your machine. Take a look at the assembly generated to verify what your annotations are doing.</p> <h2 id="reprise">Reprise</h2> <p>I restricted the conversation to mostly be around simple <code class="language-plaintext highlighter-rouge">if</code> statements, as opposed to <code class="language-plaintext highlighter-rouge">switch</code> statements. Similar concepts apply, but since there are arbitrarily more branches, the probabilities can get a bit more complicated. But here’s a small trick with <code class="language-plaintext highlighter-rouge">[[(un)likely]]</code> that you might be able to use for certain <code class="language-plaintext highlighter-rouge">switch</code> statements:</p> <p>Both <code class="language-plaintext highlighter-rouge">gcc</code> and <code class="language-plaintext highlighter-rouge">clang</code> (especially on high optimisation levels) tend to treat the <code class="language-plaintext highlighter-rouge">default</code> case of a switch as unlikely, and place it furthest away from the condition check, regardless of where you place the <code class="language-plaintext highlighter-rouge">default</code> yourself (<a href="https://godbolt.org/z/5q6Wdqz8b" rel="external nofollow noopener" target="_blank">simple godbolt to illustrate</a>). If there are a lot of switch cases, the code in the <code class="language-plaintext highlighter-rouge">default</code> case might not be pulled into cache. But you may have a <code class="language-plaintext highlighter-rouge">switch</code> where the <code class="language-plaintext highlighter-rouge">default</code> case is actually the most common, or the path you’d like to optimise for. Annotating <code class="language-plaintext highlighter-rouge">default</code> with <code class="language-plaintext highlighter-rouge">[[likely]]</code> can sometimes help with this, with differing levels of effectiveness depending on compiler and optimisation level (<a href="https://godbolt.org/z/WjxdTen3j" rel="external nofollow noopener" target="_blank">godbolt</a>).</p> <h2 id="references">References</h2> <div class="footnotes" role="doc-endnotes"> <ol> <li id="fn:7"> <p><a href="https://iifx.dev/en/articles/460265551/the-perils-of-overusing-c-s-likely-and-unlikely-attributes" rel="external nofollow noopener" target="_blank">The Perils of Overusing C++’s [[likely]] and [[unlikely]] attributes</a> <a href="#fnref:7" class="reversefootnote" role="doc-backlink">↩</a></p> </li> <li id="fn:8"> <p><a href="https://blog.aaronballman.com/2020/08/dont-use-the-likely-or-unlikely-attributes/" rel="external nofollow noopener" target="_blank">Don’t use the [[likely]] or [[unlikely]] attributes</a> <a href="#fnref:8" class="reversefootnote" role="doc-backlink">↩</a> <a href="#fnref:8:1" class="reversefootnote" role="doc-backlink">↩<sup>2</sup></a> <a href="#fnref:8:2" class="reversefootnote" role="doc-backlink">↩<sup>3</sup></a></p> </li> <li id="fn:9"> <p><a href="https://news.ycombinator.com/item?id=37964634" rel="external nofollow noopener" target="_blank">Hacker News discussion of [[likely]] and [[unlikely]]</a> <a href="#fnref:9" class="reversefootnote" role="doc-backlink">↩</a></p> </li> <li id="fn:15"> <p><a href="https://en.cppreference.com/w/cpp/language/attributes/likely" rel="external nofollow noopener" target="_blank">cppreference.com: attribute: likely, unlikely</a> <a href="#fnref:15" class="reversefootnote" role="doc-backlink">↩</a></p> </li> <li id="fn:17"> <p><a href="https://www.agner.org/optimize/microarchitecture.pdf" rel="external nofollow noopener" target="_blank">Agner Fog’s microarch optimisation manual</a> <a href="#fnref:17" class="reversefootnote" role="doc-backlink">↩</a> <a href="#fnref:17:1" class="reversefootnote" role="doc-backlink">↩<sup>2</sup></a> <a href="#fnref:17:2" class="reversefootnote" role="doc-backlink">↩<sup>3</sup></a></p> </li> <li id="fn:18"> <p><a href="https://www.phoronix.com/news/GCC-Clang-Intel-x86-Branch-Hint" rel="external nofollow noopener" target="_blank">Branch hints in <code class="language-plaintext highlighter-rouge">gcc</code> and <code class="language-plaintext highlighter-rouge">clang</code></a> <a href="#fnref:18" class="reversefootnote" role="doc-backlink">↩</a></p> </li> <li id="fn:16"> <p><a href="https://github.com/compilerai/refmanuals/blob/master/intel-248966-Optimization-Reference-Manual-V1-050.pdf" rel="external nofollow noopener" target="_blank">Intel® 64 and IA-32 Architectures Optimization Reference Manual</a> (April 2024, Ref: 248966-050US) <a href="#fnref:16" class="reversefootnote" role="doc-backlink">↩</a></p> </li> <li id="fn:1"> <p><a href="https://dl.acm.org/doi/10.1145/93548.93550" rel="external nofollow noopener" target="_blank">Profile guided code positioning</a> (Page 19) <a href="#fnref:1" class="reversefootnote" role="doc-backlink">↩</a></p> </li> <li id="fn:4"> <p><a href="https://research.facebook.com/publications/improved-basic-block-reordering/" rel="external nofollow noopener" target="_blank">Improved Basic Block Reordering</a> <a href="#fnref:4" class="reversefootnote" role="doc-backlink">↩</a></p> </li> <li id="fn:5"> <p><a href="https://gcc.gnu.org/cgit/gcc/tree/gcc/predict.def" rel="external nofollow noopener" target="_blank">predict.def</a> <a href="#fnref:5" class="reversefootnote" role="doc-backlink">↩</a></p> </li> <li id="fn:2"> <p><a href="https://gcc.gnu.org/onlinedocs/gcc-4.2.1/gccint/Profile-information.html" rel="external nofollow noopener" target="_blank"><code class="language-plaintext highlighter-rouge">gcc</code> profile tree documentation</a> <a href="#fnref:2" class="reversefootnote" role="doc-backlink">↩</a></p> </li> <li id="fn:10"> <p><a href="https://llvm.org/doxygen/BranchProbabilityInfo_8h_source.html" rel="external nofollow noopener" target="_blank">BranchProbabilityInfo.h</a> <a href="#fnref:10" class="reversefootnote" role="doc-backlink">↩</a></p> </li> <li id="fn:11"> <p><a href="https://llvm.org/doxygen/BranchProbabilityInfo_8cpp_source.html#l01221" rel="external nofollow noopener" target="_blank">BranchProbabilityInfo.cpp</a> <a href="#fnref:11" class="reversefootnote" role="doc-backlink">↩</a></p> </li> <li id="fn:6"> <p><a href="https://godbolt.org/z/6o9hshE49" rel="external nofollow noopener" target="_blank">Example functions godbolt</a> <a href="#fnref:6" class="reversefootnote" role="doc-backlink">↩</a></p> </li> <li id="fn:20"> <p><a href="https://clang.llvm.org/doxygen/CodeGenFunction_8cpp_source.html#l01896" rel="external nofollow noopener" target="_blank">CodeGenFunction::EmitBranchOnBoolExpr</a> <a href="#fnref:20" class="reversefootnote" role="doc-backlink">↩</a></p> </li> <li id="fn:19"> <p><a href="https://llvm.org/doxygen/LowerExpectIntrinsic_8cpp_source.html" rel="external nofollow noopener" target="_blank">LowerExpectIntrinsic.cpp</a> <a href="#fnref:19" class="reversefootnote" role="doc-backlink">↩</a></p> </li> <li id="fn:12"> <p><a href="https://en.wikipedia.org/wiki/Profile-guided_optimization" rel="external nofollow noopener" target="_blank">Profile Guided Optimisation</a> <a href="#fnref:12" class="reversefootnote" role="doc-backlink">↩</a></p> </li> <li id="fn:13"> <p><a href="https://www.youtube.com/watch?v=80QJllNxyps" rel="external nofollow noopener" target="_blank">Profile Guided Optimisation 101 by Alexander Zaitsev</a> <a href="#fnref:13" class="reversefootnote" role="doc-backlink">↩</a> <a href="#fnref:13:1" class="reversefootnote" role="doc-backlink">↩<sup>2</sup></a> <a href="#fnref:13:2" class="reversefootnote" role="doc-backlink">↩<sup>3</sup></a> <a href="#fnref:13:3" class="reversefootnote" role="doc-backlink">↩<sup>4</sup></a></p> </li> <li id="fn:14"> <p><a href="https://clang.llvm.org/docs/MisExpect.html" rel="external nofollow noopener" target="_blank">clang-misexpect</a> <a href="#fnref:14" class="reversefootnote" role="doc-backlink">↩</a></p> </li> </ol> </div> </div> </article><div id="giscus_thread" style="max-width: 800px; margin: 0 auto;"> <script>let giscusTheme=localStorage.getItem("theme"),giscusAttributes={src:"https://giscus.app/client.js","data-repo":"cyrusknopf/cyrusknopf.github.io","data-repo-id":"","data-category":"General","data-category-id":"","data-mapping":"title","data-strict":"1","data-reactions-enabled":"0","data-emit-metadata":"0","data-input-position":"top","data-theme":giscusTheme,"data-lang":"en",crossorigin:"anonymous",async:""},giscusScript=document.createElement("script");Object.entries(giscusAttributes).forEach(([t,e])=>giscusScript.setAttribute(t,e)),document.getElementById("giscus_thread").appendChild(giscusScript);</script> <noscript>Please enable JavaScript to view the <a href="http://giscus.app/?ref_noscript" rel="external nofollow noopener" target="_blank">comments powered by giscus.</a> </noscript> </div> </div> </div> <footer class="sticky-bottom mt-5"> <div class="container"> Last updated: March 08, 2026. </div> </footer> <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script> <script src="/assets/js/bootstrap.bundle.min.js"></script> <script src="https://cdn.jsdelivr.net/npm/mdbootstrap@4.20.0/js/mdb.min.js" integrity="sha256-NdbiivsvWt7VYCt6hYNT3h/th9vSTL4EDWeGs5SN3DA=" crossorigin="anonymous"></script> <script type="text/javascript">$(function(){$('[data-toggle="tooltip"]').tooltip()});</script> <script defer src="https://cdn.jsdelivr.net/npm/medium-zoom@1.0.8/dist/medium-zoom.min.js" integrity="sha256-7PhEpEWEW0XXQ0k6kQrPKwuoIomz8R8IYyuU1Qew4P8=" crossorigin="anonymous"></script> <script defer src="/assets/js/zoom.js?7b30caa5023af4af8408a472dc4e1ebb"></script> <script defer src="https://unpkg.com/bootstrap-table@1.22.1/dist/bootstrap-table.min.js"></script> <script src="/assets/js/no_defer.js?d633890033921b33e0ceb13d22340a9c"></script> <script defer src="/assets/js/common.js?acdb9690d7641b2f8d40529018c71a01"></script> <script defer src="/assets/js/copy_code.js?c9d9dd48933de3831b3ee5ec9c209cac" type="text/javascript"></script> <script async src="https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js"></script> <script async src="https://badge.dimensions.ai/badge.js"></script> <script type="text/javascript">window.MathJax={tex:{tags:"ams"}};</script> <script defer type="text/javascript" id="MathJax-script" src="https://cdn.jsdelivr.net/npm/mathjax@3.2.0/es5/tex-mml-chtml.js"></script> <script defer src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script> </body> </html>
