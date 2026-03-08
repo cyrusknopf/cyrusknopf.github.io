@@ -1,5 +1,261 @@
 @import url("https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,200;0,300;0,500;0,600;0,800;1,200;1,300;1,500;1,600;1,800&display=swap");
 
-html, body {
+/* Spectral for text */
+body {
   font-family: "Spectral", serif;
+}
+
+/* monospace stack for all code-related elements */
+pre,
+code,
+.highlight,
+.highlight pre,
+.highlight code,
+.rouge-code,
+.rouge-table {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+               "Liberation Mono", "Courier New", monospace;
+  border-radius: 10px;
+}
+
+.rouge-code {
+  padding-left: 1em;
+}
+
+.post blockquote {
+  border-left: none;
+  margin: 1.5rem 0;
+  padding: 0;
+  font-style: italic;
+  font-weight: 0.1;
+  color: #B1B695; // optional accent
+}
+
+/* ensure Rouge span tokens inherit monospace */
+.highlight * {
+  font-family: inherit;
+}
+
+/* ------------------ */
+/* Base code block    */
+/* ------------------ */
+
+.highlight {
+  background: #2b292d;
+  color: #fecdb2;
+}
+
+.highlight pre {
+  background: #2b292d;
+  color: #fecdb2;
+}
+
+.highlight code {
+  background: #2b292d;
+}
+
+/* Rouge table layout */
+.highlight .rouge-table {
+  background: #2b292d;
+}
+
+.highlight .rouge-gutter {
+  background: #2b292d;
+}
+
+/* Line numbers */
+
+.highlight .lineno {
+  color: #6F5D63;
+}
+
+/* ------------------ */
+/* Comments           */
+/* ------------------ */
+
+.highlight .c,
+.highlight .cm,
+.highlight .c1,
+.highlight .cs,
+.highlight .cp {
+  color: #6F5D63;
+  font-style: italic;
+}
+
+/* ------------------ */
+/* Keywords           */
+/* ------------------ */
+
+.highlight .k,
+.highlight .kd,
+.highlight .kn,
+.highlight .kp,
+.highlight .kr {
+  color: #D1D1E0;
+}
+
+/* ------------------ */
+/* Operators          */
+/* ------------------ */
+
+.highlight .o,
+.highlight .ow {
+  color: #D1D1E0;
+}
+
+/* ------------------ */
+/* Punctuation        */
+/* ------------------ */
+
+.highlight .p {
+  color: #fecdb2;
+}
+
+/* ------------------ */
+/* Types              */
+/* ------------------ */
+
+.highlight .kt {
+  color: #F6B6C9;
+}
+
+/* ------------------ */
+/* Functions          */
+/* ------------------ */
+
+.highlight .nf,
+.highlight .fm {
+  color: #ffa07a;
+}
+
+/* ------------------ */
+/* Variables / names  */
+/* ------------------ */
+
+.highlight .n,
+.highlight .na,
+.highlight .nb,
+.highlight .nc,
+.highlight .nd,
+.highlight .ni,
+.highlight .ne,
+.highlight .nl,
+.highlight .nn,
+.highlight .no,
+.highlight .nv,
+.highlight .vc,
+.highlight .vg,
+.highlight .vi {
+  color: #fecdb2;
+}
+
+/* builtin variables */
+
+.highlight .nb {
+  color: #F6B6C9;
+}
+
+/* namespaces / modules */
+
+.highlight .nn {
+  color: #fecdb2;
+}
+
+/* attributes */
+
+.highlight .na {
+  color: #fecdb2;
+}
+
+/* labels */
+
+.highlight .nl {
+  color: #B1B695;
+}
+
+/* ------------------ */
+/* Strings            */
+/* ------------------ */
+
+.highlight .s,
+.highlight .sb,
+.highlight .sc,
+.highlight .sd,
+.highlight .s2,
+.highlight .se,
+.highlight .sh,
+.highlight .si,
+.highlight .sx,
+.highlight .sr,
+.highlight .s1 {
+  color: #B1B695;
+}
+
+/* ------------------ */
+/* Numbers / constants */
+/* ------------------ */
+
+.highlight .m,
+.highlight .mf,
+.highlight .mh,
+.highlight .mi,
+.highlight .il,
+.highlight .mo {
+  color: #B1B695;
+}
+
+.highlight .kc,
+.highlight .kd,
+.highlight .kp,
+.highlight .kr {
+  color: #D1D1E0;
+}
+
+/* ------------------ */
+/* Generic formatting */
+/* ------------------ */
+
+.highlight .gd {
+  color: #e06b75;
+}
+
+.highlight .gi {
+  color: #B1B695;
+}
+
+.highlight .gu {
+  color: #fecdb2;
+}
+
+.highlight .gh {
+  color: #B1B695;
+  font-weight: bold;
+}
+
+.highlight .gs {
+  font-weight: bold;
+}
+
+.highlight .ge {
+  font-style: italic;
+}
+
+/* ------------------ */
+/* Errors / warnings  */
+/* ------------------ */
+
+.highlight .err {
+  color: #e06b75;
+}
+
+/* ------------------ */
+/* Selection styling  */
+/* ------------------ */
+
+.highlight ::selection {
+  background: #4d424b;
+}
+
+.highlight ::-moz-selection {
+  background: #4d424b;
 }
