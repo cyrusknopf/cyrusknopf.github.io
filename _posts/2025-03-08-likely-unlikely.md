@@ -333,7 +333,7 @@ will likely have no effect on code layout, since they are both identified as unl
 
 ## Applications
 
-I propose two scenarios in which one may wish to override the code layout the compiler would otherwise generate:
+I see two scenarios in which one may wish to override the code layout the compiler would otherwise generate:
 
 1. using the programmer's external knowledge to provide a heuristic in cases otherwise ambiguous to the compiler;
 2. overriding a heuristic that the compiler would normally use to determine code layout.
@@ -354,7 +354,7 @@ The `[[unlikely]]` attribute has changed the code layout such that the `if` path
 
 However, this approach is often discouraged [^8] in favour of Profile Guided Optimisation (PGO).
 
-PGO [^12] is a technique to optimise the compiled instructions of a program using *dynamic analysis* of the execution of a program. PGO involves observing and recording statistics about the execution of a program, and feeding those statistics back in a second compilation of the same program. This second compilation uses the provided statistics to attempt to improve the runtime performance of the program. (PGO is nuanced, and I cannot do the topic justice here. I recommend [^13] as an introduction.)
+PGO [^12] is a technique to optimise a program using *dynamic analysis* of the execution of that program. Statistics on the number of times a branch or function is taken are recorded during execution, and those statistics are fed into a second compilation of the same program. This second compilation uses the provided statistics to attempt to improve the runtime performance of the program; for example, by reordering basic blocks to maximise the number of fallthrough branches. (For more on PGO, I recommend [^13] as an introduction.)
 
 ### `[[(un)likely]]` vs PGO
 
@@ -412,7 +412,7 @@ Using the attributes in this way is a little abrasive. It feels slightly wrong t
 
 ## Verifiable branch annotation with PGO
 
-Rather than pitting branch annotations and PGO against each other, there has been some effort from the LLVM project to make them work together. Given some program source and profile data on that program, `clang-misexpect` [^14] can make `clang` emit warnings/reports when the source code contains branch annotations which contradict the profile data. For example, if you annotated a branch as unlikely, but in fact it was almost always the taken path, then `clang-misexpect` can catch this, and direct you to the line of the questionable annotation. It is then up to the developers discretion as to whether that annotation should be changed.
+Rather than pitting branch annotations and PGO against each other, there has been some effort from the LLVM project to make them work together. Given some program source and profile data on that program, `clang-misexpect` [^14] can make `clang` emit warnings/reports when the source code contains branch annotations which contradict the profile data. For example, if you annotated a branch as unlikely, but in fact it was almost always the taken path, then `clang-misexpect` can catch this, and direct you to the line of the questionable annotation. It is then up to the developer's discretion as to whether that annotation should be changed.
 
 This workflow provides the empirical verification of branch likelihoods of PGO, whilst maintaining the flexibility to ignore profile results for specific branches with annotations. Also, it allows all your code layout manipulation (in the form of annotations) to be version-controlled and documented inline, as opposed to relying on a separate store of profile data.
 
