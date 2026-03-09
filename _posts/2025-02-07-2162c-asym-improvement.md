@@ -90,7 +90,7 @@ We can implement this in C++ with bit manipulation. I use a typedef of `num = ui
 
 To check whether $$\text{msb}(a) < \text{msb}(b)$$ and whether the problem is solvable, we use compiler intrinsics to "count leading zeros" of $$a$$ and $$b$$:
 
-~~~null
+~~~cpp
 if (__builtin_clzll(b) < __builtin_clzll(a)) {
     return {"-1"};
 }
@@ -98,13 +98,13 @@ if (__builtin_clzll(b) < __builtin_clzll(a)) {
 
 we then compute our $$x$$;
 
-~~~null
+~~~cpp
 num x = a ^ b;
 ~~~
 
 check whether we can solve in a single operation;
 
-~~~null
+~~~cpp
 if (x <= a) {
     string out = "1\n" + to_string(x);
     return out;
@@ -113,7 +113,7 @@ if (x <= a) {
 
 use some more bit tricks to compute our $$x'$$, and then return our two operations;
 
-~~~null
+~~~cpp
 // get the msb of x
 num msbit = 1ull << ((sizeof(num) * 8 - __builtin_clzll(x)) - 1);
 // remove the msb from x to get x'
@@ -125,7 +125,7 @@ return out;
 
 The complete solution, with an initial check for trivial test cases, is:
 
-~~~null
+~~~cpp
 using namespace std;
 using num = uint64_t;
 
