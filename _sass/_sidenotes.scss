@@ -1,0 +1,63 @@
+.post { counter-reset: sidenote-counter; }
+
+// settings
+$sidenote-side: right;
+$sidenote-width: 45%;
+$sidenote-gap: 3%;
+$text-width: 62%;
+$sidenote-breakpoint: 1100px;
+$sidenote-opposite: if($sidenote-side == left, right, left);
+
+.post { counter-reset: sidenote-counter; }
+
+.sidenote-number { counter-increment: sidenote-counter; }
+.sidenote-number:after,
+.sidenote:before {
+  content: counter(sidenote-counter, lower-alpha);
+  font-size: 0.75rem;
+  vertical-align: super;
+  color: var(--global-theme-color);
+}
+
+input.sidenote-toggle { display: none; }
+
+.sidenote {
+  float: $sidenote-side;
+  clear: $sidenote-side;
+  width: $sidenote-width;
+  margin-#{$sidenote-side}: -($sidenote-width + $sidenote-gap);
+  margin-#{$sidenote-opposite}: 0;
+  margin-top: 0.3rem;
+  text-align: $sidenote-opposite;   // ragged edge faces away from the text
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--global-text-color);
+  position: relative;
+}
+
+@media (min-width: $sidenote-breakpoint) {
+  .post article {
+    max-width: $text-width;
+    margin-#{$sidenote-side}: auto;      // pushes text away from the notes
+    margin-#{$sidenote-opposite}: 0;
+  }
+}
+
+// narrow screens -> tap note to reveal
+@media (max-width: $sidenote-breakpoint - 1px) {
+  .sidenote-number { cursor: pointer; }
+  .sidenote { display: none; }
+  input.sidenote-toggle:checked + .sidenote {
+    display: block;
+    float: none;
+    width: 90%;
+    margin: 0.5rem 5%;
+    text-align: left;
+  }
+}
+
+@media (min-width: 1100px) {
+  .post article {
+    max-width: 70%;
+  }
+}

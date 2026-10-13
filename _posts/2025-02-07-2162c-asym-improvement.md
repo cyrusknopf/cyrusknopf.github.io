@@ -78,9 +78,11 @@ We can solve in single operation: $$x$$.
 
 **Case 2**: $$a < x$$
 
-We know that $$\text{msb}(x)\le \text{msb}(a)$$ from above, but since $$a < x$$, we have the stronger condition of $$\text{msb}(x) = \text{msb}(a)$$[^1].
+We know that $$\text{msb}(x)\le \text{msb}(a)$$ from above, but since $$a < x$$, we have the stronger condition of $$\text{msb}(x) = \text{msb}(a)$$
+{% sidenote %} Because $$y < z \implies \text{msb}(y) \le\text{msb}(z)$$ {% endsidenote %}
 
-Let $$x'$$ be $$x$$ with its most significant bit set low, i.e. $$x' = x\ \&\ \lnot\text{msb}(x)$$ [^2], equivalently $$\text{msb}(x) \mathbin{\&} x' = x$$.
+Let $$x'$$ be $$x$$ with its most significant bit set low, i.e. $$x' = x\ \&\ \lnot\text{msb}(x)$$, equivalently $$\text{msb}(x) \mathbin{\&} x' = x$$.
+{% sidenote %} I'm using $$\text{msb}(y)$$ to be the binary representation of $$y$$ with all bits other than its most significant set low, e.g. $$y = 5 = 0101$$ would give $$\text{msb}(y) = 4 = 0100$$. {% endsidenote %}
 
 And since $$\text{msb}(x') < \text{msb}(x) \le \text{msb}(a)$$, we have $$x' < a$$ and $$\text{msb}(x) = \text{msb}(a) \le a$$, meaning we can return a vector of $$\{ \text{msb}(x), x'  \}$$ as our solution.
 
@@ -159,7 +161,3 @@ string solve(num a, num b) {
 ~~~
 
 Not only is this solution $$O(1)$$, but it is almost entirely bitwise operations and intrinsics, meaning it's kind to the CPU. Ignoring constructing and returning the strings (only needed for codeforces I/O), `clang` generates fewer than 26 instructions to compute the answer ([godbolt](https://godbolt.org/z/f9bzajTeb)).
-
-# Footnotes
-[^1]: Because $$y < z \implies \text{msb}(y) \le\text{msb}(z)$$
-[^2]: I'm using $$\text{msb}(y)$$ to be the binary representation of $$y$$ with all bits other than its most significant set low, e.g. $$y = 5 = 0101$$ would give $$\text{msb}(y) = 4 = 0100$$.
